@@ -3,6 +3,8 @@
 // This file is only used in tests but it is still tested itself.
 // Hopefully it can be removed for a feature in tap in the future
 
+const PATH = require('../../lib/utils/path')
+
 const sep = '.'
 const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k)
 const opd = (o, k) => Object.getOwnPropertyDescriptor(o, k)
@@ -54,20 +56,12 @@ const protoDescriptor = (obj, key) => {
   return descriptor
 }
 
-// Path can be different cases across platform so get the original case
-// of the path before anything is changed
+// Path can be different cases across platform so get the original case of
+// the key so we can reset it on teardown
 // XXX: other special cases to handle?
-const specialCaseKeys = (() => {
-  const originalKeys = {
-    PATH: process.env.PATH ? 'PATH' : process.env.Path ? 'Path' : 'path',
-  }
-  return (key) => {
-    switch (key.toLowerCase()) {
-      case 'process.env.path':
-        return originalKeys.PATH
-    }
-  }
-})()
+const specialCaseKeys = (k) => ({
+  'process.env.path': PATH.key,
+})[k.toLowerCase()]
 
 const _setGlobal = Symbol('setGlobal')
 const _nextDescriptor = Symbol('nextDescriptor')
@@ -76,18 +70,20 @@ class DescriptorStack {
   #stack = []
   #global = null
   #valueKey = null
-  #defaultDescriptor = { configurable: true, writable: true, enumerable: true }
+  #originalKey = null
+  #descriptor = { configurable: true, writable: true, enumerable: true }
   #delete = () => ({ DELETE: true })
   #isDelete = (o) => o && o.DELETE === true
 
   constructor (key) {
     const keys = splitLast(key)
     this.#global = keys.length === 1 ? global : get(global, keys[0])
-    this.#valueKey = specialCaseKeys(key) || last(keys)
+    this.#valueKey = last(keys)
+    this.#originalKey = specialCaseKeys(key) || this.#valueKey
     // If the global object doesnt return a descriptor for the key
     // then we mark it for deletion on teardown
     this.#stack = [
-      protoDescriptor(this.#global, this.#valueKey) || this.#delete(),
+      protoDescriptor(this.#global, this.#originalKey) || this.#delete(),
     ]
   }
 
@@ -116,30 +112,35 @@ class DescriptorStack {
     // teardown if we have an initial descriptor left
     // and then delete the rest of the stack
     if (this.#stack.length) {
-      this[_setGlobal](this.#stack[0])
+      if (this.#originalKey === this.#valueKey) {
+        this[_setGlobal](this.#stack[0])
+      } else {
+        // If the original key and the value key we've been updating
+        // are different then on reset we need to reset the original
+        // key and delete the key we've been updating
+        this[_setGlobal](this.#stack[0], this.#originalKey)
+        this[_setGlobal](this.#delete(), this.#valueKey)
+      }
       this.#stack.length = 0
     }
   }
 
-  [_setGlobal] (d) {
+  [_setGlobal] (d, key = this.#valueKey) {
     if (this.#isDelete(d)) {
-      delete this.#global[this.#valueKey]
+      delete this.#global[key]
     } else {
-      Object.defineProperty(this.#global, this.#valueKey, d)
+      Object.defineProperty(this.#global, key, d)
     }
     return d
   }
 
   [_nextDescriptor] (value) {
-    if (value === undefined) {
-      return this.#delete()
-    }
-    const d = last(this.#stack)
-    return {
+    const d = last(this.#stack) || {}
+    return value === undefined ? this.#delete() : {
       // If the previous descriptor was one to delete the property
       // then use the default descriptor as the base
-      ...(this.#isDelete(d) ? this.#defaultDescriptor : d),
-      ...(d && d.get ? { get: () => value } : { value }),
+      ...(this.#isDelete(d) ? this.#descriptor : d),
+      ...(d.get ? { get: () => value } : { value }),
     }
   }
 }

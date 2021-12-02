@@ -1,12 +1,38 @@
 const t = require('tap')
-const mod = '../../../lib/utils/path.js'
-const delim = require('../../../lib/utils/is-windows.js') ? ';' : ':'
-Object.defineProperty(process, 'env', {
-  value: {},
+const mockGlobals = require('../../fixtures/mock-globals')
+const { delimiter } = require('path')
+
+const mockPath = () => t.mock('../../../lib/utils/path.js')
+
+mockGlobals(t, { 'process.env': {} }, { replace: true })
+t.strictSame(process.env, {})
+
+t.test('uppercase', async t => {
+  const parts = ['foo', 'bar', 'baz']
+  mockGlobals(t, { 'process.env.PATH': parts.join(delimiter) })
+  t.match(mockPath(), {
+    PATH: parts,
+    key: 'PATH',
+    value: parts.join(delimiter),
+  })
 })
-process.env.path = ['foo', 'bar', 'baz'].join(delim)
-t.strictSame(t.mock(mod), ['foo', 'bar', 'baz'])
-process.env.Path = ['a', 'b', 'c'].join(delim)
-t.strictSame(t.mock(mod), ['a', 'b', 'c'])
-process.env.PATH = ['x', 'y', 'z'].join(delim)
-t.strictSame(t.mock(mod), ['x', 'y', 'z'])
+
+t.test('mixed case', async t => {
+  const parts = ['a', 'b', 'c']
+  mockGlobals(t, { 'process.env.Path': parts.join(delimiter) })
+  t.match(mockPath(), {
+    PATH: parts,
+    key: 'Path',
+    value: parts.join(delimiter),
+  })
+})
+
+t.test('lowercase', async t => {
+  const parts = ['x', 'y', 'z']
+  mockGlobals(t, { 'process.env.path': parts.join(delimiter) })
+  t.match(mockPath(), {
+    PATH: parts,
+    key: 'path',
+    value: parts.join(delimiter),
+  })
+})
